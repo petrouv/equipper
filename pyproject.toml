@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "equipper"
+version = "1.0.0"
+description = "Скрипт для организации фото и видео по папкам с учетом устройства и софта"
+authors = [
+    {name = "Nikita Petrov", email = "petrov.nikita@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.6"
+keywords = ["photos", "videos", "organization", "halide", "media", "files"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: System :: Filesystems",
+    "Topic :: Utilities",
+]
+
+[project.scripts]
+equipper = "equipper:main"
+
+[project.urls]
+Homepage = "https://github.com/petrouv/equipper"
+"Bug Reports" = "https://github.com/petrouv/equipper/issues"
+Source = "https://github.com/petrouv/equipper"
+
+[project.optional-dependencies]
+dev = ["ruff"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501", # line too long, handled by formatter
+    "B008", # do not perform function calls in argument defaults
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
