@@ -28,11 +28,7 @@
 import sys
 from pathlib import Path
 
-try:
-    from .organizer import FileOrganizer
-except ImportError:
-    # Fallback for direct script execution
-    from organizer import FileOrganizer
+from .organizer import FileOrganizer
 
 
 def main():

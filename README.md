@@ -274,11 +274,11 @@ pip install -e ".[dev]"
 
 ### Базовое использование
 ```bash
-# Прямой запуск
-  /path/to/photos
-
-# После установки
+# После установки (рекомендуемый способ)
 equipper /path/to/photos
+
+# Запуск как модуль (без установки скрипта)
+python -m equipper.cli /path/to/photos
 ```
 
 ### Режимы работы
@@ -392,17 +392,19 @@ Multiple_Exports/                  ← целевая папка, остаётс
 
 ## Архитектура
 
-### Модульная структура
+### Модульная структура (src-layout)
 ```
 equipper/
-├── __init__.py          # Экспорт основного класса
-├── equipper.py          # Точка входа, CLI интерфейс
-├── organizer.py         # Основная логика FileOrganizer
-├── detectors.py         # Классификация и группировка  
-├── constants.py         # Константы приложений и форматов
-├── pyproject.toml       # Конфигурация проекта
-├── requirements-dev.txt # Зависимости для разработки  
-└── README.md           # Документация
+├── src/
+│   └── equipper/
+│       ├── __init__.py      # Экспорт публичного API (FileOrganizer)
+│       ├── cli.py           # Точка входа CLI (entry point: equipper.cli:main)
+│       ├── organizer.py     # Основная логика FileOrganizer
+│       ├── detectors.py     # Классификация и группировка
+│       └── constants.py     # Константы приложений и форматов
+├── pyproject.toml           # Конфигурация проекта
+├── requirements-dev.txt     # Зависимости для разработки
+└── README.md                # Документация
 ```
 
 ### Основные классы
@@ -432,12 +434,13 @@ ruff format .
 ```bash
 # Создание тестовых файлов
 mkdir tmp
-cd tmp  
+cd tmp
 touch IMG_3431.HEIC IMG_E3431.HEIC IMG_3431.AAE
 
 # Тестирование
 cd ..
-python3 equipper.py tmp
+equipper tmp                     # после pip install -e .
+python -m equipper.cli tmp       # как модуль (без установки скрипта)
 ```
 
 ### Добавление новых приложений

@@ -17,25 +17,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-try:
-    from .constants import AppNames, DeviceMakers, FilePatterns, JunkFiles
-    from .detectors import (
-        BlackmagicDetector,
-        FileGrouper,
-        FileTypeDetector,
-        HalideDetector,
-        PhotosAppFileDetector,
-    )
-except ImportError:
-    # Fallback for direct script execution
-    from constants import AppNames, DeviceMakers, FilePatterns, JunkFiles
-    from detectors import (
-        BlackmagicDetector,
-        FileGrouper,
-        FileTypeDetector,
-        HalideDetector,
-        PhotosAppFileDetector,
-    )
+from .constants import AppNames, DeviceMakers, FilePatterns, JunkFiles
+from .detectors import (
+    BlackmagicDetector,
+    FileGrouper,
+    FileTypeDetector,
+    HalideDetector,
+    PhotosAppFileDetector,
+)
 
 
 class OrganizationPipeline:

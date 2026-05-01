@@ -10,11 +10,7 @@
 import json
 import subprocess
 
-try:
-    from .constants import AppNames, FilePatterns, MediaExtensions
-except ImportError:
-    # Fallback for direct script execution
-    from constants import AppNames, FilePatterns, MediaExtensions
+from .constants import AppNames, FilePatterns, MediaExtensions
 
 
 class FileGroup:

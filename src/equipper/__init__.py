@@ -28,7 +28,7 @@
 
 from .organizer import FileOrganizer
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __all__ = [
     "FileOrganizer",  # Основной класс для организации файлов
 ]
