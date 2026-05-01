@@ -72,5 +72,9 @@ Thumbs.db
 
 # Project specific
 tmp/
+test/
 test_data/
 .ruff_cache/
+
+# Stray npm artifact (this is a pure Python project)
+package-lock.json

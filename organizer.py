@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 try:
-    from .constants import AppNames, FilePatterns
+    from .constants import AppNames, DeviceMakers, FilePatterns, JunkFiles
     from .detectors import (
         BlackmagicDetector,
         FileGrouper,
@@ -28,7 +28,7 @@ try:
     )
 except ImportError:
     # Fallback for direct script execution
-    from constants import AppNames, FilePatterns
+    from constants import AppNames, DeviceMakers, FilePatterns, JunkFiles
     from detectors import (
         BlackmagicDetector,
         FileGrouper,
@@ -49,7 +49,7 @@ class OrganizationPipeline:
     """
 
     @staticmethod
-    def run_full_pipeline(organizer):
+    def run_full_pipeline(organizer, recursive=True):
         """Выполняет полный цикл организации файлов.
 
         Координирует выполнение всех этапов обработки в правильном порядке.
@@ -57,8 +57,11 @@ class OrganizationPipeline:
 
         Args:
             organizer (FileOrganizer): Экземпляр организатора файлов
+            recursive (bool): Передаётся в сканер. False используется для
+                финального прохода по корню в смешанном режиме, чтобы
+                не повторно обрабатывать файлы из подпапок.
         """
-        file_groups = organizer.scan_and_group_files()
+        file_groups = organizer.scan_and_group_files(recursive=recursive)
         devices, primary_device = organizer.create_device_structure(file_groups)
         organizer.move_groups_to_destinations(file_groups, devices, primary_device)
 
@@ -166,21 +169,54 @@ class FileOrganizer:
             "iPhone12,8": "iPhone SE (2nd generation)",
         }
 
+        # Словарь канонических названий моделей по производителям.
+        # Ключи: (canonical_make, model_lowercase_or_id). Значения: маркетинговое
+        # имя БЕЗ префикса производителя (он добавляется при сборке имени папки).
+        # EXIF Model у DJI/GoPro/Insta360 часто содержит технический FC-код
+        # вместо маркетингового названия.
+        self.model_aliases = {
+            # DJI — дроны и экшн-камеры.
+            # Источник FC-кодов: EXIF реальных файлов и публичные базы данных.
+            ("DJI", "fc9313"): "Mini 5 Pro",
+            ("DJI", "mini 5 pro"): "Mini 5 Pro",
+            ("DJI", "dji mini 5 pro"): "Mini 5 Pro",
+            ("DJI", "ac004"): "Osmo Action 5 Pro",
+            ("DJI", "osmo action 5 pro"): "Osmo Action 5 Pro",
+            ("DJI", "dji osmo action 5 pro"): "Osmo Action 5 Pro",
+            ("DJI", "osmoaction5pro"): "Osmo Action 5 Pro",
+            # Дополнительные DJI-устройства, часто встречающиеся в EXIF
+            ("DJI", "fc8482"): "Mini 4 Pro",
+            ("DJI", "dji mini 4 pro"): "Mini 4 Pro",
+            ("DJI", "fc7303"): "Mini 3 Pro",
+            ("DJI", "dji mini 3 pro"): "Mini 3 Pro",
+            ("DJI", "ac003"): "Osmo Action 4",
+            ("DJI", "ac002"): "Osmo Action 3",
+            ("DJI", "dji air 3"): "Air 3",
+            ("DJI", "dji air 3s"): "Air 3S",
+            ("DJI", "dji mavic 3"): "Mavic 3",
+            ("DJI", "dji mavic 3 pro"): "Mavic 3 Pro",
+            ("DJI", "dji pocket 3"): "Pocket 3",
+        }
+
         # Счетчики для статистики
         self.processed_files = []
         self.created_folders = []
         self.moved_folders = []
 
-    def scan_and_group_files(self):
+    def scan_and_group_files(self, recursive=True):
         """Этап 1: Сканирование и группировка всех файлов.
 
         Делегирует работу FileGrouper для поиска и объединения
         связанных файлов в логические группы.
 
+        Args:
+            recursive (bool): Если False — сканируется только корень src_dir
+                без захода в подпапки.
+
         Returns:
             List[FileGroup]: Список групп связанных файлов
         """
-        return self.grouper.scan_and_group_files(self.src_dir)
+        return self.grouper.scan_and_group_files(self.src_dir, recursive=recursive)
 
     def create_device_structure(self, file_groups):
         """Этап 2: Создание структуры устройств.
@@ -290,11 +326,15 @@ class FileOrganizer:
     def _normalize_device_name(self, make, model):
         """Нормализует техническое название устройства в читаемое.
 
-        Преобразует технические идентификаторы Apple в понятные названия:
-        iPhone14,3 → iPhone 13 Pro Max
-        iPhone15,2 → iPhone 14 Pro
-
-        Для других производителей возвращает комбинацию Make + Model.
+        Алгоритм:
+        1. Производитель приводится к каноническому написанию через
+           DeviceMakers.CANONICAL (FUJIFILM → Fujifilm, NIKON CORPORATION → Nikon).
+        2. Модель Apple iPhone преобразуется по словарю iphone_models
+           (iPhone14,3 → iPhone 13 Pro Max).
+        3. Модели прочих производителей проверяются по словарю model_aliases
+           (DJI FC8482 → DJI Mini 5 Pro). Если совпадения нет —
+           удаляется дублирующий префикс производителя из модели,
+           чтобы избежать "DJI DJI Mini 5 Pro".
 
         Args:
             make (str): Производитель устройства (из EXIF)
@@ -303,41 +343,123 @@ class FileOrganizer:
         Returns:
             str: Нормализованное название устройства
         """
-        if make == "Apple" and model.startswith("iPhone"):
-            # Проверяем, есть ли это в словаре нормализации
+        canonical_make = self._canonical_make(make)
+
+        if canonical_make == "Apple" and model.startswith("iPhone"):
             if model in self.iphone_models:
                 return f"Apple {self.iphone_models[model]}"
-            else:
-                return f"Apple {model}"
-        else:
-            return f"{make} {model}"
+            return f"Apple {model}"
+
+        canonical_model = self._canonical_model(canonical_make, model)
+        return f"{canonical_make} {canonical_model}".strip()
+
+    def _canonical_make(self, make):
+        """Возвращает каноническое написание производителя.
+
+        Args:
+            make (str): Сырое значение из EXIF Make
+
+        Returns:
+            str: Канонический Make (если известен) или Title Case fallback
+        """
+        if not make:
+            return ""
+        key = make.strip().lower()
+        if key in DeviceMakers.CANONICAL:
+            return DeviceMakers.CANONICAL[key]
+        # Fallback: если производитель неизвестен — приводим к Title Case,
+        # чтобы избежать "FUJIFILM" в имени папки.
+        return make.strip().title()
+
+    def _canonical_model(self, canonical_make, model):
+        """Возвращает каноническое написание модели.
+
+        Args:
+            canonical_make (str): Канонический производитель
+            model (str): Сырое значение из EXIF Model
+
+        Returns:
+            str: Каноническая модель (без префикса производителя)
+        """
+        if not model:
+            return ""
+        model = model.strip()
+        key = (canonical_make, model.lower())
+        if key in self.model_aliases:
+            model = self.model_aliases[key]
+
+        # Удаляем дублирующий префикс производителя, чтобы итоговая папка
+        # не превращалась в "DJI DJI Mini 5 Pro".
+        prefix = f"{canonical_make} ".lower()
+        if model.lower().startswith(prefix):
+            model = model[len(prefix) :].strip()
+
+        return model
 
     def _cleanup_empty_folders(self):
-        """Удаляет пустые папки после перемещения файлов.
+        """Удаляет пустые папки и системный мусор после перемещения файлов.
 
-        Рекурсивно ищет и удаляет пустые директории в исходной папке.
-        Полезно для очистки структуры после реорганизации файлов.
-        Сохраняет корневую папку даже если она пустая.
+        Алгоритм:
+        1. Рекурсивно удаляет junk-файлы (.DS_Store, Thumbs.db, ._* и т.п.)
+           из всего поддерева src_dir, включая саму src_dir.
+        2. Удаляет пустые папки в порядке от самых глубоких к корню,
+           чтобы каскадно убирать вложенные "матрёшки" за один проход.
+
+        Сама src_dir не удаляется, даже если становится пустой.
         """
         print("  Очистка пустых папок...")
 
+        junk_removed = self._remove_junk_files_recursively(self.src_dir)
+        if junk_removed > 0:
+            print(f"    🧹 Удалено системных файлов: {junk_removed}")
+
         removed_count = 0
-        # Ищем пустые папки рекурсивно
-        for folder_path in list(self.src_dir.rglob("*")):
-            if (
-                folder_path.is_dir()
-                and folder_path != self.src_dir
-                and not any(folder_path.iterdir())
-            ):  # папка пустая
-                try:
-                    folder_path.rmdir()
-                    print(f"    🗑️ Удалена пустая папка: {folder_path.name}")
-                    removed_count += 1
-                except Exception as e:
-                    print(f"    ❌ Ошибка удаления {folder_path.name}: {e}")
+        # Сортируем по глубине пути — сначала самые глубокие, чтобы их удаление
+        # сделало родителей пустыми и они тоже попали под rmdir в этом же проходе.
+        folders = sorted(
+            (p for p in self.src_dir.rglob("*") if p.is_dir()),
+            key=lambda p: len(p.parts),
+            reverse=True,
+        )
+        for folder_path in folders:
+            if folder_path == self.src_dir:
+                continue
+            if any(folder_path.iterdir()):
+                continue
+            try:
+                folder_path.rmdir()
+                print(f"    🗑️ Удалена пустая папка: {folder_path.name}")
+                removed_count += 1
+            except Exception as e:
+                print(f"    ❌ Ошибка удаления {folder_path.name}: {e}")
 
         if removed_count > 0:
             print(f"  ✅ Удалено пустых папок: {removed_count}")
+
+    @staticmethod
+    def _is_junk_file(file_path):
+        """Проверяет, является ли файл системным мусором (.DS_Store, ._*, и т.п.)."""
+        name = file_path.name
+        return name in JunkFiles.NAMES or any(
+            name.startswith(prefix) for prefix in JunkFiles.PREFIXES
+        )
+
+    @staticmethod
+    def _remove_junk_files_recursively(root):
+        """Рекурсивно удаляет системные мусорные файлы из всего поддерева.
+
+        Returns:
+            int: Сколько файлов удалено.
+        """
+        removed = 0
+        for entry in root.rglob("*"):
+            if entry.is_file() and FileOrganizer._is_junk_file(entry):
+                try:
+                    entry.unlink()
+                    removed += 1
+                except Exception:
+                    pass
+        return removed
 
     def _ensure_folder_exists(self, folder_path):
         """Безопасно создает папку если она не существует.
@@ -590,10 +712,11 @@ class FileOrganizer:
             for folder in folders_with_media:
                 self.organize_single_folder(folder)
 
-            # Если есть файлы в корне, обрабатываем и их
+            # Если есть файлы в корне, обрабатываем и их.
+            # recursive=False — чтобы не зацепить файлы из уже обработанных подпапок.
             if files_in_root:
                 print(f"\n📁 Обрабатываю корневую папку: {self.src_dir.name}")
-                self.pipeline.run_full_pipeline(self)
+                self.pipeline.run_full_pipeline(self, recursive=False)
 
         else:
             print("⚠️  В указанной директории не найдено медиафайлов для обработки")

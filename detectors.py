@@ -52,16 +52,27 @@ class FileGroup:
         """Возвращает основной файл группы (для извлечения метаданных).
 
         Приоритет файлов по информативности EXIF данных:
-        1. HEIC - наиболее полные метаданные
-        2. DNG - RAW файлы с полными данными
-        3. MOV - видео файлы
-        4. JPG/PNG - сжатые изображения
-        5. AAE - только метаданные редактирования
+        1. HEIC/HEIF - наиболее полные метаданные iOS
+        2. RAW (DNG, RAF, ARW, CR2/CR3, NEF, ORF, RW2, ...) - полные EXIF от камер
+        3. MOV/MP4 - видео файлы
+        4. JPG/JPEG/PNG/TIFF - сжатые изображения
+        5. AAE/XMP - только метаданные редактирования
 
         Returns:
             Path: Путь к файлу с наивысшим приоритетом
         """
-        priorities = {".HEIC": 1, ".DNG": 2, ".MOV": 3, ".JPG": 4, ".PNG": 5, ".AAE": 6}
+        priorities = {
+            ".HEIC": 1,
+            ".HEIF": 1,
+            **dict.fromkeys(MediaExtensions.RAW, 2),
+            **dict.fromkeys(MediaExtensions.VIDEOS, 3),
+            ".JPG": 4,
+            ".JPEG": 4,
+            ".PNG": 5,
+            ".TIF": 5,
+            ".TIFF": 5,
+            **dict.fromkeys(MediaExtensions.METADATA, 6),
+        }
         return min(self.files, key=lambda f: priorities.get(f.suffix.upper(), 7))
 
     def __repr__(self):
@@ -80,7 +91,7 @@ class FileGrouper:
         self.detector = FileTypeDetector()
         self.blackmagic_detector = BlackmagicDetector()
 
-    def scan_and_group_files(self, directory):
+    def scan_and_group_files(self, directory, recursive=True):
         """Сканирует директорию и группирует файлы по связям.
 
         Процесс группировки:
@@ -91,6 +102,11 @@ class FileGrouper:
 
         Args:
             directory (Path): Директория для сканирования
+            recursive (bool): Если True — обходит вложенные папки (rglob).
+                Если False — только файлы непосредственно в `directory`.
+                Используется в смешанном режиме при финальной обработке
+                корневой папки, чтобы не захватывать файлы из уже
+                обработанных подпапок.
 
         Returns:
             List[FileGroup]: Список групп файлов
@@ -99,7 +115,8 @@ class FileGrouper:
 
         # Собираем все медиафайлы
         all_files = []
-        for file_path in directory.rglob("*"):
+        iterator = directory.rglob("*") if recursive else directory.iterdir()
+        for file_path in iterator:
             if file_path.is_file() and FileTypeDetector.is_media_file(file_path):
                 all_files.append(file_path)
 
