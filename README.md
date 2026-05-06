@@ -62,38 +62,77 @@ Apple iPhone 13 Pro Max/
 
 ### Классификация файлов по приложениям
 
+iPhone-приложения не оставляют уникальной подписи в EXIF (поле Software
+содержит только версию iOS), поэтому Photos и Halide различаются по
+**сигнатуре файлов в группе**. Ключевые дискриминаторы Photos.app:
+
+- **AAE-сайдкар** (`IMG_xxxx.AAE`) — пишется только при правке в Photos.app,
+  Halide такие сайдкары не создаёт.
+- **MOV-видео** (`IMG_xxxx.MOV` или `IMG_Exxxx.MOV`) — компонент Live Photo,
+  Halide MOV не создаёт.
+
+Если в группе есть AAE или любой MOV — это Photos, даже если другие файлы
+по форме совпадают с сигнатурой Halide. Halide-классификация применяется
+только к группам **без AAE и без MOV**.
+
 #### 1. Приложение Фото (Photos)
 
-**Live Photo (стандартные):**
+**Обычное фото:**
 ```
-IMG_7256.HEIC + IMG_E7256.HEIC + IMG_E7256.MOV
-├── Основной снимок: IMG_7256.HEIC
-├── Обработанный кадр: IMG_E7256.HEIC  
-└── Видео компонент: IMG_E7256.MOV
+IMG_7257.HEIC (одиночный)
 → Назначение: корень устройства
 ```
 
-**Обычные снимки:**
+**Apple ProRAW (Камера в режиме ProRAW):**
 ```
-IMG_7257.HEIC (одиночный файл без пары)
+IMG_7258.DNG (одиночный, ~25 МБ)
+→ Назначение: корень устройства
+```
+Одиночный DNG — это ProRAW из стандартной Камеры iOS, а не Halide.
+Halide RAW всегда идёт парой с HEIC (см. ниже).
+
+**Live Photo (без правки):**
+```
+IMG_7256.HEIC + IMG_7256.MOV (общий ContentIdentifier в EXIF)
 → Назначение: корень устройства
 ```
 
-**Обработанные файлы:**
+**Обычное фото, отредактированное в Photos:**
 ```
-IMG_E7258.JPG (без соответствующего IMG_7258.HEIC)
+IMG_7256.HEIC + IMG_E7256.HEIC + IMG_7256.AAE
+├── Оригинал: IMG_7256.HEIC
+├── Результат правки: IMG_E7256.HEIC
+└── Сайдкар правки: IMG_7256.AAE
+→ Назначение: корень устройства
+```
+Без AAE-сайдкара эта же сигнатура (`HEIC + IMG_E.HEIC`) считается
+Halide Portrait — поэтому AAE здесь критичен.
+
+**Live Photo, отредактированное в Photos:**
+```
+IMG_7256.HEIC + IMG_7256.MOV + IMG_E7256.HEIC + IMG_E7256.MOV + IMG_7256.AAE
+→ Назначение: корень устройства
+```
+
+**ProRAW, отредактированное в Photos:**
+```
+IMG_7258.DNG + IMG_E7258.JPG + IMG_7258.AAE
+├── Оригинал ProRAW: IMG_7258.DNG
+├── Результат правки (JPEG): IMG_E7258.JPG
+└── Сайдкар правки: IMG_7258.AAE
+→ Назначение: корень устройства
+```
+Photos.app экспортирует правку ProRAW как JPEG, не пересохраняя DNG.
+
+**Обработанный файл без оригинала:**
+```
+IMG_E7258.JPG (без соответствующего IMG_7258.HEIC/DNG)
 → Назначение: корень устройства
 ```
 
 #### 2. Halide
 
-**Halide Portrait (характерная связка):**
-```
-IMG_7256.HEIC + IMG_E7256.HEIC (БЕЗ IMG_E7256.MOV)
-├── Оригинал: IMG_7256.HEIC
-└── Обработанный портрет: IMG_E7256.HEIC
-→ Назначение: папка Halide
-```
+Halide классифицируется только когда в группе **нет ни AAE, ни MOV**.
 
 **Halide RAW:**
 ```
@@ -103,10 +142,12 @@ IMG_7257.DNG + IMG_7257.HEIC
 → Назначение: папка Halide
 ```
 
-**Одиночные DNG файлы:**
+**Halide Portrait:**
 ```
-IMG_7258.DNG (без парного HEIC)
-→ Назначение: корень устройства (приложение Фото)
+IMG_7256.HEIC + IMG_E7256.HEIC (без MOV, без AAE)
+├── Оригинал: IMG_7256.HEIC
+└── Обработанный портрет: IMG_E7256.HEIC
+→ Назначение: папка Halide
 ```
 
 #### 3. Blackmagic Camera
@@ -147,13 +188,14 @@ IMG_7259.DNG (Software: "Moment Pro Camera")
 
 ### Специальные случаи обработки
 
-#### AAE файлы (метаданные редактирования)
+#### AAE файлы (сайдкары правки Photos.app)
 
-**Принцип:** AAE файлы всегда следуют за основными файлами своей группы
-```
-IMG_7256.HEIC → Halide
-IMG_7256.AAE  → Halide (следует за основным файлом)
-```
+AAE — это plist-сайдкар, который Photos.app создаёт **только** при
+редактировании. Внутри лежит `adjustmentBaseVersion` / `adjustmentData`
+с инструкциями правки. Halide такие файлы не пишет.
+
+**Следствие для классификации:** наличие AAE в группе → Photos. AAE
+сам по себе перемещается в той же папке, что и его группа.
 
 #### Файлы без EXIF данных
 
@@ -187,12 +229,14 @@ IMG_7256.AAE  → Halide (следует за основным файлом)
 ```
 tmp/
 ├── IMG_7256.HEIC      (Photos Live Photo)
-├── IMG_E7256.HEIC     (Photos Live Photo) 
-├── IMG_E7256.MOV      (Photos Live Photo)
-├── IMG_7257.HEIC      (Halide Portrait)
-├── IMG_E7257.HEIC     (Halide Portrait)
-├── IMG_7258.DNG       (Halide RAW)
-├── IMG_7258.HEIC      (Halide RAW)
+├── IMG_7256.MOV       (Photos Live Photo)
+├── IMG_7257.HEIC      (Photos, обычное edited)
+├── IMG_E7257.HEIC     (Photos, обычное edited)
+├── IMG_7257.AAE       (Photos, обычное edited)
+├── IMG_7258.HEIC      (Halide Portrait)
+├── IMG_E7258.HEIC     (Halide Portrait)
+├── IMG_7259.DNG       (Halide RAW)
+├── IMG_7259.HEIC      (Halide RAW)
 ├── A001_08041410_C001.MOV (Blackmagic)
 └── 08042025_141023.MOV (Filmic - EXIF)
 ```
@@ -201,13 +245,15 @@ tmp/
 ```
 Apple iPhone 13 Pro Max/
 ├── IMG_7256.HEIC      ← Photos (Live Photo)
-├── IMG_E7256.HEIC     ← Photos (Live Photo)
-├── IMG_E7256.MOV      ← Photos (Live Photo)
+├── IMG_7256.MOV       ← Photos (Live Photo)
+├── IMG_7257.HEIC      ← Photos (обычное edited, AAE → Photos)
+├── IMG_E7257.HEIC     ← Photos (обычное edited)
+├── IMG_7257.AAE       ← Photos (обычное edited)
 ├── Halide/
-│   ├── IMG_7257.HEIC  ← Halide Portrait
-│   ├── IMG_E7257.HEIC ← Halide Portrait  
-│   ├── IMG_7258.DNG   ← Halide RAW
-│   └── IMG_7258.HEIC  ← Halide RAW
+│   ├── IMG_7258.HEIC  ← Halide Portrait
+│   ├── IMG_E7258.HEIC ← Halide Portrait
+│   ├── IMG_7259.DNG   ← Halide RAW
+│   └── IMG_7259.HEIC  ← Halide RAW
 ├── Blackmagic Camera/
 │   └── A001_08041410_C001.MOV ← Blackmagic
 └── Filmic/

@@ -170,10 +170,12 @@ class FileGrouper:
 
         Алгоритм определения:
         1. Проверка EXIF на специфичные приложения (Filmic, Moment, Blackmagic)
-        2. Анализ комбинаций файлов для Halide vs Photos:
+        2. Photos-дискриминаторы (приоритет над Halide):
+           - AAE в группе → Photos (сайдкар правки из Photos.app)
+           - любой MOV в группе → Photos (Live Photo: HEIC+MOV или HEIC+EHEIC+MOV+EMOV)
+        3. Halide-сигнатуры (только без AAE и без MOV):
            - DNG+HEIC = Halide RAW
-           - HEIC+IMG_E без MOV = Halide Portrait
-           - HEIC+IMG_E+MOV = Photos Live Photo
+           - HEIC+IMG_E.HEIC = Halide Portrait
 
         Args:
             group (FileGroup): Группа файлов для анализа
@@ -189,9 +191,8 @@ class FileGrouper:
         has_e_heic = any(
             f.suffix.upper() == ".HEIC" and f.name.startswith("IMG_E") for f in group.files
         )
-        has_e_mov = any(
-            f.suffix.upper() == ".MOV" and f.name.startswith("IMG_E") for f in group.files
-        )
+        has_aae = any(f.suffix.upper() == ".AAE" for f in group.files)
+        has_mov = any(f.suffix.upper() == ".MOV" for f in group.files)
 
         # EXIF-основанное определение приложений
         # Проверяем каждый файл в группе на наличие метаданных от специфичных приложений
@@ -225,16 +226,16 @@ class FileGrouper:
 
         # Логика определения для IMG файлов (с числовым базовым именем)
         if group.base_name.isdigit():  # IMG_7256, IMG_E7256, и т.д.
-            # Признаки Halide:
-            # 1. RAW режим: IMG_xxxx.DNG + IMG_xxxx.HEIC (оба файла есть)
-            # 2. Portrait режим: IMG_xxxx.HEIC + IMG_Exxxx.HEIC без IMG_Exxxx.MOV
-            if (has_dng and has_heic) or (has_heic and has_e_heic and not has_e_mov):
-                return AppNames.HALIDE
-            # Признаки Photos (все остальные комбинации):
-            # - Live Photos: IMG_xxxx.HEIC + IMG_Exxxx.HEIC + IMG_Exxxx.MOV
-            # - Одиночные фото: только IMG_xxxx.HEIC
-            else:
+            # AAE/MOV — однозначные сигнатуры Photos.app: AAE пишет только Photos
+            # при правке, MOV (любой) — Live Photo. Halide ни AAE, ни MOV не создаёт.
+            if has_aae or has_mov:
                 return AppNames.PHOTOS
+            # Признаки Halide (нет ни AAE, ни MOV):
+            # 1. RAW режим: IMG_xxxx.DNG + IMG_xxxx.HEIC
+            # 2. Portrait режим: IMG_xxxx.HEIC + IMG_Exxxx.HEIC
+            if (has_dng and has_heic) or (has_heic and has_e_heic):
+                return AppNames.HALIDE
+            return AppNames.PHOTOS
 
         # Для остальных файлов - Photos по умолчанию
         return AppNames.PHOTOS
@@ -423,14 +424,17 @@ class PhotosAppFileDetector:
         """Обрабатывает файлы IMG_E*.HEIC."""
         base_heic = parent_folder / f"{img_base}.HEIC"
         e_mov = parent_folder / f"{FilePatterns.IMG_E}{base_num}.MOV"
+        base_mov = parent_folder / f"{img_base}.MOV"
+        base_aae = parent_folder / f"{img_base}.AAE"
 
         if base_heic.exists():
-            # Ключевое различие между Live Photo и Halide Portrait:
-            # Live Photo: IMG_xxxx.HEIC + IMG_Exxxx.HEIC + IMG_Exxxx.MOV (есть все 3 файла)
-            if e_mov.exists():
-                return True  # Это Live Photo из приложения Фото
-            # Halide Portrait: IMG_xxxx.HEIC + IMG_Exxxx.HEIC (без MOV файла)
-            return False  # Это Halide Portrait
+            # AAE/любой MOV рядом — однозначно Photos.app:
+            # - AAE пишет только Photos при правке
+            # - MOV без E (HEIC+MOV) — Live Photo, MOV с E — отредактированный Live
+            if base_aae.exists() or e_mov.exists() or base_mov.exists():
+                return True
+            # Иначе HEIC+EHEIC без сайдкаров — Halide Portrait
+            return False
 
         return False  # Нет базового HEIC - не можем определить
 
@@ -449,25 +453,25 @@ class PhotosAppFileDetector:
         base_num = self.detector.get_base_number(file_name)
         e_heic = parent_folder / f"{FilePatterns.IMG_E}{base_num}.HEIC"
         e_mov = parent_folder / f"{FilePatterns.IMG_E}{base_num}.MOV"
+        base_mov = parent_folder / f"{FilePatterns.IMG_BASE}{base_num}.MOV"
+        base_aae = parent_folder / f"{FilePatterns.IMG_BASE}{base_num}.AAE"
         base_dng = parent_folder / f"{FilePatterns.IMG_BASE}{base_num}.DNG"
 
-        # Приоритет 1: Halide RAW (наличие DNG файла)
-        if base_dng.exists():
+        # Приоритет 1: Halide RAW (DNG+HEIC, без AAE и без MOV)
+        if base_dng.exists() and not base_aae.exists() and not base_mov.exists():
             return False  # Это Halide RAW
 
-        # Приоритет 2: Live Photo из Photos (есть все 3 файла)
-        if e_mov.exists():
-            return True  # Это Live Photo из Photos
+        # Приоритет 2: AAE или любой MOV — Photos
+        # (Live Photo: HEIC+MOV; Live edited: +EHEIC+EMOV+AAE; Photo edited: +EHEIC+AAE)
+        if base_aae.exists() or e_mov.exists() or base_mov.exists():
+            return True
 
-        # Приоритет 3: Halide Portrait (только 2 HEIC файла, без MOV)
-        if e_heic.exists() and not e_mov.exists():
-            return False  # Это Halide Portrait
+        # Приоритет 3: Halide Portrait (HEIC + EHEIC без сайдкаров)
+        if e_heic.exists():
+            return False
 
         # Приоритет 4: Обычное фото из Photos (одиночный HEIC)
-        if not e_heic.exists() and not base_dng.exists():
-            return True  # Это обычное фото из Photos
-
-        return False  # Не удалось определить точно
+        return True
 
     def _process_dng_file(self, file_path, parent_folder):
         """Обрабатывает DNG файлы."""
@@ -541,10 +545,9 @@ class HalideDetector:
     def has_halide_files(folder):
         """Проверяет, есть ли в папке файлы из Halide.
 
-        Простая эвристика на основе признаков:
-        1. Наличие DNG файлов (основной признак Halide RAW)
-        2. Пары IMG_xxxx.HEIC + IMG_Exxxx.HEIC без MOV файла
-           (характерно для Halide Portrait режима)
+        Сигнатуры Halide (только без AAE и без MOV рядом — иначе Photos):
+        1. DNG+HEIC пара (Halide RAW). Одиночный DNG — это ProRAW из Photos.
+        2. IMG_xxxx.HEIC + IMG_Exxxx.HEIC без AAE/MOV (Halide Portrait).
 
         Args:
             folder (Path): Папка для проверки
@@ -553,16 +556,27 @@ class HalideDetector:
             bool: True если в папке есть файлы Halide
         """
         for file_path in folder.rglob("*"):
-            if file_path.is_file():
-                if file_path.suffix.upper() == ".DNG":
-                    return True
+            if not file_path.is_file():
+                continue
 
-                # Проверяем пары IMG + IMG_E.HEIC без MOV (характерно для Halide Portrait)
-                if file_path.name.startswith("IMG_") and file_path.suffix.upper() == ".HEIC":
-                    base_name = file_path.name[4:8]  # 7256
-                    e_heic_path = file_path.parent / f"IMG_E{base_name}.HEIC"
-                    e_mov_path = file_path.parent / f"IMG_E{base_name}.MOV"
-                    if e_heic_path.exists() and not e_mov_path.exists():
-                        return True
+            if file_path.name.startswith("IMG_") and not file_path.name.startswith("IMG_E"):
+                base_num = file_path.name[4:8]
+                parent = file_path.parent
+                base_heic = parent / f"IMG_{base_num}.HEIC"
+                base_dng = parent / f"IMG_{base_num}.DNG"
+                base_mov = parent / f"IMG_{base_num}.MOV"
+                base_aae = parent / f"IMG_{base_num}.AAE"
+                e_heic = parent / f"IMG_E{base_num}.HEIC"
+                e_mov = parent / f"IMG_E{base_num}.MOV"
+
+                if base_aae.exists() or base_mov.exists() or e_mov.exists():
+                    continue  # Photos-сигнатура, не Halide
+
+                # Halide RAW: DNG+HEIC
+                if base_dng.exists() and base_heic.exists():
+                    return True
+                # Halide Portrait: HEIC+EHEIC без сайдкаров
+                if base_heic.exists() and e_heic.exists():
+                    return True
 
         return False

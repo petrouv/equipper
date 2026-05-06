@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "equipper"
-version = "1.1.1"
+version = "1.1.2"
 description = "Скрипт для организации фото и видео по папкам с учетом устройства и софта"
 authors = [
     {name = "Nikita Petrov", email = "petrov.nikita@gmail.com"}
